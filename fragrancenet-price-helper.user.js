@@ -90,12 +90,14 @@
         skuElements.forEach(item => {
             const el = item.element;
             const sku = item.sku;
-            if (!el.dataset.priceInjected) {
+            
+            // 檢查是否已存在注入標籤（防範 React 動態更新將子節點抹除）
+            const existingBadge = el.querySelector('.fnet-injected-badge');
+            if (!existingBadge) {
                 const priceInfo = skuPriceMap[sku];
                 if (priceInfo) {
-                    el.dataset.priceInjected = 'true';
-                    
                     const badge = document.createElement('span');
+                    badge.className = 'fnet-injected-badge';
                     badge.style.display = 'inline-flex';
                     badge.style.alignItems = 'center';
                     badge.style.marginLeft = '10px';
@@ -120,46 +122,54 @@
         buttons.forEach(btn => {
             const btnText = btn.textContent.toLowerCase();
             const hasNotifyText = btnText.includes('notify me') || btnText.includes('when available');
-            if (hasNotifyText && !btn.dataset.priceBannerInjected) {
-                btn.dataset.priceBannerInjected = 'true';
+            if (hasNotifyText) {
+                // 檢查該按鈕的前一個兄弟元素是否已是看板（防範 React 動態更新抹除看板）
+                const prevEl = btn.previousElementSibling;
+                const hasBanner = prevEl && prevEl.classList.contains('fnet-injected-price-banner');
+                
+                if (!hasBanner) {
+                    // 抓取此按鈕當前關聯的 SKU 編號
+                    const activeSkus = getActiveSkusOnPage();
+                    if (activeSkus.length > 0) {
+                        const activeSku = activeSkus[0];
+                        const priceInfo = skuPriceMap[activeSku];
 
-                // 抓取此按鈕當前關聯的 SKU 編號
-                const activeSkus = getActiveSkusOnPage();
-                if (activeSkus.length > 0) {
-                    const activeSku = activeSkus[0];
-                    const priceInfo = skuPriceMap[activeSku];
+                        if (priceInfo) {
+                            // 刪除可能因 DOM 重新排序或更新而殘留的舊看板
+                            const oldBanners = btn.parentNode.querySelectorAll('.fnet-injected-price-banner');
+                            oldBanners.forEach(ob => ob.remove());
 
-                    if (priceInfo) {
-                        // 建立外觀高雅的虛線外框看板
-                        const banner = document.createElement('div');
-                        banner.className = 'fnet-injected-price-banner';
-                        banner.style.width = '100%';
-                        banner.style.background = 'rgba(82, 37, 85, 0.04)';
-                        banner.style.border = '1.5px dashed #522555';
-                        banner.style.borderRadius = '8px';
-                        banner.style.padding = '12px 15px';
-                        banner.style.marginBottom = '14px';
-                        banner.style.textAlign = 'center';
-                        banner.style.boxSizing = 'border-box';
-                        banner.style.fontFamily = 'system-ui, -apple-system, BlinkMacSystemFont, sans-serif';
-                        banner.style.animation = 'fadeInDown 0.3s ease-out';
-                        
-                        // 價格計算並排版呈現（包含虛擬的原價對比與背景底價標註）
-                        banner.innerHTML = `
-                            <div style="color: #666666; font-size: 12px; text-transform: uppercase; font-weight: 500; margin-bottom: 4px;">
-                                🔍 偵測到缺貨商品背景底價 (Item #${activeSku})
-                            </div>
-                            <div style="display: flex; align-items: center; justify-content: center; gap: 8px;">
-                                <span style="color: #888888; font-size: 14px; text-decoration: line-through;">原預估價: $${(priceInfo.price * 1.3).toFixed(2)}</span>
-                                <strong style="color: #522555; font-size: 22px; font-weight: 800;">$${priceInfo.price} <span style="font-size: 13px; font-weight: 500;">${priceInfo.currency}</span></strong>
-                            </div>
-                            <div style="color: #b89753; font-size: 11px; font-weight: 600; margin-top: 3px; letter-spacing: 0.5px;">
-                                ✨ 補貨後預計將以此背景價（或配合折扣碼）供您購買
-                            </div>
-                        `;
+                            // 建立外觀高雅的虛線外框看板
+                            const banner = document.createElement('div');
+                            banner.className = 'fnet-injected-price-banner';
+                            banner.style.width = '100%';
+                            banner.style.background = 'rgba(82, 37, 85, 0.04)';
+                            banner.style.border = '1.5px dashed #522555';
+                            banner.style.borderRadius = '8px';
+                            banner.style.padding = '12px 15px';
+                            banner.style.marginBottom = '14px';
+                            banner.style.textAlign = 'center';
+                            banner.style.boxSizing = 'border-box';
+                            banner.style.fontFamily = 'system-ui, -apple-system, BlinkMacSystemFont, sans-serif';
+                            banner.style.animation = 'fadeInDown 0.3s ease-out';
+                            
+                            // 價格計算並排版呈現（包含虛擬的原價對比與背景底價標註）
+                            banner.innerHTML = `
+                                <div style="color: #666666; font-size: 12px; text-transform: uppercase; font-weight: 500; margin-bottom: 4px;">
+                                    🔍 偵測到缺貨商品背景底價 (Item #${activeSku})
+                                </div>
+                                <div style="display: flex; align-items: center; justify-content: center; gap: 8px;">
+                                    <span style="color: #888888; font-size: 14px; text-decoration: line-through;">原預估價: $${(priceInfo.price * 1.3).toFixed(2)}</span>
+                                    <strong style="color: #522555; font-size: 22px; font-weight: 800;">$${priceInfo.price} <span style="font-size: 13px; font-weight: 500;">${priceInfo.currency}</span></strong>
+                                </div>
+                                <div style="color: #b89753; font-size: 11px; font-weight: 600; margin-top: 3px; letter-spacing: 0.5px;">
+                                    ✨ 補貨後預計將以此背景價（或配合折扣碼）供您購買
+                                </div>
+                            `;
 
-                        // 插入至 Notify Me 按鈕的前方（上方）
-                        btn.parentNode.insertBefore(banner, btn);
+                            // 插入至 Notify Me 按鈕的前方（上方）
+                            btn.parentNode.insertBefore(banner, btn);
+                        }
                     }
                 }
             }
