@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FragranceNet 缺貨商品背景價格顯示器
 // @namespace    http://tampermonkey.net/
-// @version      1.6
+// @version      1.7
 // @description  在 FragranceNet 上針對任何缺貨的商品，自動解析背景 JSON-LD 結構化資料，並在「Notify Me」按鈕上方與商品編號旁顯示背景隱藏價格。
 // @author       Antigravity
 // @match        https://www.fragrancenet.com/*
@@ -14,7 +14,7 @@
 
     // 豪華樣式的 Console Log 標頭
     console.log(
-        "%c🚀 [FragranceNet Helper v1.6] 油猴指令碼已成功載入並開始執行！", 
+        "%c🚀 [FragranceNet Helper v1.7] 油猴指令碼已載入並啟動雙模守護機制（Observer + Timer）！", 
         "color: #ffffff; background: #522555; font-weight: bold; font-size: 13px; padding: 4px 10px; border-radius: 4px;"
     );
 
@@ -25,7 +25,6 @@
     // 解析 JSON-LD 結構化資料
     function parseJsonLd() {
         const scripts = document.querySelectorAll('script[type="application/ld+json"]');
-        console.log(`[FragranceNet Helper] 開始掃描結構化資料，發現標籤數: ${scripts.length}`);
         
         scripts.forEach((script, idx) => {
             try {
@@ -34,24 +33,34 @@
                 script.dataset.parsedByPriceHelper = 'true';
 
                 const data = JSON.parse(script.textContent);
+                console.log(`[LD-JSON 掃描] 成功讀取第 ${idx + 1} 個 JSON 對象:`, data);
+                
                 const items = Array.isArray(data) ? data : [data];
 
                 items.forEach(item => {
-                    if (item && item['@type'] === 'Product') {
+                    if (item) {
+                        const type = item['@type'];
                         const offers = item.offers;
-                        if (offers) {
+                        const sku = item.sku || (offers && offers.sku);
+                        
+                        console.log(`[LD-JSON 節點] 偵測到類型: "${type}", SKU: "${sku}", 有 Offers: ${!!offers}`);
+
+                        // 只要節點包含 offers 或 sku，即視為產品資訊（防止因網頁翻譯將 Product 類型字串翻譯成中文而配對失敗）
+                        const isProduct = type === 'Product' || offers || sku || (Array.isArray(type) && type.includes('Product'));
+                        
+                        if (isProduct && offers) {
                             const offerList = Array.isArray(offers) ? offers : [offers];
                             offerList.forEach(offer => {
-                                const sku = offer.sku || item.sku;
+                                const finalSku = offer.sku || item.sku;
                                 const price = offer.price;
                                 const currency = offer.priceCurrency || 'USD';
-                                if (sku && price !== undefined) {
-                                    const cleanSku = sku.trim();
+                                if (finalSku && price !== undefined) {
+                                    const cleanSku = String(finalSku).trim();
                                     skuPriceMap[cleanSku] = {
                                         price: parseFloat(price).toFixed(2),
                                         currency: currency
                                     };
-                                    console.log(`%c[LD-JSON 解析成功] SKU: ${cleanSku} -> 售價: $${price} ${currency}`, "color: #b89753; font-weight: 500;");
+                                    console.log(`%c[LD-JSON 解析成功] SKU: ${cleanSku} -> 售價: $${price} ${currency}`, "color: #b89753; font-weight: bold;");
                                 }
                             });
                         }
@@ -107,12 +116,13 @@
 
     // 執行價格注入邏輯
     function injectPrices() {
-        console.log("[FragranceNet Helper] 正在執行價格注入掃描...");
+        // 印出簡單標記以在主控台確認掃描是否有被執行
+        console.log("[FragranceNet Helper] 執行價格注入掃描 (Time: " + new Date().toLocaleTimeString() + ")");
+        
         parseJsonLd();
 
         // 1. 在最深層的商品編號「Item #XXXXXX」旁注入精美小紫色標籤
         const skuElements = findSkuElements();
-        console.log(`[FragranceNet Helper] 發現 SKU DOM 節點數量: ${skuElements.length}`);
         
         skuElements.forEach(item => {
             const el = item.element;
@@ -141,23 +151,17 @@
                     badge.textContent = `背景售價: $${priceInfo.price} ${priceInfo.currency}`;
                     
                     el.appendChild(badge);
-                } else {
-                    console.log(`[UI 標籤跳過] SKU: ${sku} 在背景 Map 中找不到價格資料。`);
                 }
-            } else {
-                console.log(`[UI 標籤已存在] SKU: ${sku} 已有紫色小標籤。`);
             }
         });
 
         // 2. 在缺貨的「Notify me / When Available」按鈕上方，生成價格提示大看板
         const buttons = document.querySelectorAll('button');
-        let notifyBtnCount = 0;
         
         buttons.forEach(btn => {
             const btnText = btn.textContent.toLowerCase();
             const hasNotifyText = btnText.includes('notify me') || btnText.includes('when available');
             if (hasNotifyText) {
-                notifyBtnCount++;
                 // 檢查該按鈕的前一個兄弟元素是否已是看板（防範 React 動態更新抹除看板）
                 const prevEl = btn.previousElementSibling;
                 const hasBanner = prevEl && prevEl.classList.contains('fnet-injected-price-banner');
@@ -206,18 +210,11 @@
 
                             // 插入至 Notify Me 按鈕的前方（上方）
                             btn.parentNode.insertBefore(banner, btn);
-                        } else {
-                            console.log(`[UI 橫幅跳過] 當前 Active SKU: ${activeSku} 找不到背景價格資料。`);
                         }
-                    } else {
-                        console.warn("[UI 橫幅跳過] 畫面上找不到任何商品編號，無法對應價格。");
                     }
-                } else {
-                    console.log("[UI 橫幅已存在] 缺貨按鈕上方已存在大橫幅，跳過。");
                 }
             }
         });
-        console.log(`[FragranceNet Helper] 掃描完畢，頁面上缺貨按鈕數量: ${notifyBtnCount}`);
     }
 
     // 注入淡入動畫 CSS 樣式
@@ -239,7 +236,7 @@
     // 初始執行一次
     injectPrices();
 
-    // 監聽 Next.js 頁面變更（因 SPA 機制，切換尺寸時只更新局部 DOM，故使用 MutationObserver 監聽）
+    // 監聽網頁所有 DOM 變更，鎖定 document.documentElement (最上層根結點) 以確保絕不漏抓
     const observer = new MutationObserver(() => {
         if (debounceTimer) clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
@@ -247,8 +244,11 @@
         }, 150);
     });
 
-    observer.observe(document.body, {
+    observer.observe(document.documentElement, {
         childList: true,
         subtree: true
     });
+
+    // 備用防線：設定 1.5 秒的定時輪詢，防止因 isolated context 或特定瀏覽器阻擋 MutationObserver 運作
+    setInterval(injectPrices, 1500);
 })();
