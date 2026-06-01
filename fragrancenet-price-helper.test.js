@@ -9,6 +9,9 @@ class Element {
         this.parentNode = null;
         this.dataset = {};
         this.style = {};
+        this.type = '';
+        this.value = '';
+        this.id = '';
         this.className = '';
         this._text = text;
         this._innerHTML = '';
@@ -111,8 +114,12 @@ function collect(root) {
 }
 
 function matches(el, selector) {
+    if (selector.includes(',')) {
+        return selector.split(',').some(part => matches(el, part.trim()));
+    }
     if (selector === '*') return true;
     if (selector === 'button') return el.tagName === 'BUTTON';
+    if (selector === 'input[type="submit"]') return el.tagName === 'INPUT' && el.type === 'submit';
     if (selector === 'script[type="application/ld+json"]') {
         return el.tagName === 'SCRIPT' && el.type === 'application/ld+json';
     }
@@ -120,10 +127,11 @@ function matches(el, selector) {
     return false;
 }
 
-function runScript(document) {
+function runScript(document, pageWindow = {}) {
     const code = fs.readFileSync('fragrancenet-price-helper.user.js', 'utf8');
     vm.runInNewContext(code, {
         document,
+        window: pageWindow,
         console: { log() {}, warn() {} },
         MutationObserver: class { observe() {} },
         setInterval() {},
@@ -212,7 +220,39 @@ function testSoldOutEmailFormUsesSingleJsonLdPriceWithoutVisibleSku() {
     assert.match(bannerText(panel), /Item #333333/);
 }
 
+function testSoldOutSubmitInputUsesSkuMapPriceWithoutVisibleSku() {
+    const panel = new Element('div');
+    panel.className = 'rightZone cf oos';
+    panel.appendChild(new Element('p', 'We apologize, we are currently sold out'));
+    panel.appendChild(new Element('p', 'If you would like to be notified when it becomes available, please enter your email address below:'));
+    const form = new Element('form');
+    form.id = 'oosForm';
+    const buttonWrapper = new Element('div');
+    buttonWrapper.className = 'fragnetButton aqua';
+    const submit = new Element('input');
+    submit.type = 'submit';
+    submit.id = 'oosSubmit';
+    submit.value = 'Submit';
+    buttonWrapper.appendChild(submit);
+    form.appendChild(buttonWrapper);
+    panel.appendChild(form);
+    const document = new Document([panel]);
+
+    runScript(document, {
+        currentSku: '416615',
+        sku_map: {
+            416615: {
+                discount_price: '18.74'
+            }
+        }
+    });
+
+    assert.match(bannerText(panel), /\$18\.74/);
+    assert.match(bannerText(panel), /Item #416615/);
+}
+
 testNestedVariantPriceIsDisplayed();
 testNotifyButtonUsesNearestSku();
 testSoldOutEmailFormUsesSingleJsonLdPriceWithoutVisibleSku();
+testSoldOutSubmitInputUsesSkuMapPriceWithoutVisibleSku();
 console.log('All tests passed');
