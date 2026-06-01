@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FragranceNet 缺貨商品背景價格顯示器
 // @namespace    http://tampermonkey.net/
-// @version      1.8
+// @version      1.9
 // @description  在 FragranceNet 上針對任何缺貨的商品，自動解析背景 JSON-LD 結構化資料，並在「Notify Me」按鈕上方與商品編號旁顯示背景隱藏價格。
 // @author       Antigravity
 // @match        https://www.fragrancenet.com/*
@@ -14,7 +14,7 @@
 
     // 豪華樣式的 Console Log 標頭
     console.log(
-        "%c🚀 [FragranceNet Helper v1.8] 油猴指令碼已載入並啟動雙模守護機制（Observer + Timer）！",
+        "%c🚀 [FragranceNet Helper v1.9] 油猴指令碼已載入並啟動雙模守護機制（Observer + Timer）！",
         "color: #ffffff; background: #522555; font-weight: bold; font-size: 13px; padding: 4px 10px; border-radius: 4px;"
     );
 
@@ -174,7 +174,9 @@
         
         buttons.forEach(btn => {
             const btnText = btn.textContent.toLowerCase();
-            const hasNotifyText = btnText.includes('notify me') || btnText.includes('when available');
+            const parentText = btn.parentNode ? btn.parentNode.textContent.toLowerCase() : '';
+            const isSoldOutEmailForm = btnText.includes('submit') && parentText.includes('sold out') && parentText.includes('email');
+            const hasNotifyText = btnText.includes('notify me') || btnText.includes('when available') || isSoldOutEmailForm;
             if (hasNotifyText) {
                 // 檢查該按鈕的前一個兄弟元素是否已是看板（防範 React 動態更新抹除看板）
                 const prevEl = btn.previousElementSibling;
@@ -186,8 +188,12 @@
                     const skuElements = findSkuElements();
                     const activeSkus = Array.from(new Set(skuElements.map(x => x.sku)));
                     console.log("[FragranceNet Helper] 目前頁面上已顯現的 SKU 編號:", activeSkus);
-                    if (activeSkus.length > 0) {
-                        const activeSku = getSkuNearButton(btn, skuElements) || activeSkus[0];
+                    let activeSku = getSkuNearButton(btn, skuElements) || activeSkus[0];
+                    if (!activeSku) {
+                        const pricedSkus = Object.keys(skuPriceMap);
+                        activeSku = pricedSkus.length === 1 ? pricedSkus[0] : null;
+                    }
+                    if (activeSku) {
                         const priceInfo = skuPriceMap[activeSku];
 
                         if (priceInfo) {
@@ -213,7 +219,7 @@
                             // 價格計算並排版呈現（包含虛擬的原價對比與背景底價標註）
                             banner.innerHTML = `
                                 <div style="color: #666666; font-size: 12px; text-transform: uppercase; font-weight: 500; margin-bottom: 4px;">
-                                    🔍 偵測到缺貨商品背景底價 (Item #${activeSku})
+                                    🔍 偵測到缺貨商品歷史/背景售價 (Item #${activeSku})
                                 </div>
                                 <div style="display: flex; align-items: center; justify-content: center; gap: 8px;">
                                     <span style="color: #888888; font-size: 14px; text-decoration: line-through;">原預估價: $${(priceInfo.price * 1.3).toFixed(2)}</span>
