@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FragranceNet 缺貨商品背景價格顯示器
 // @namespace    http://tampermonkey.net/
-// @version      1.5
+// @version      1.6
 // @description  在 FragranceNet 上針對任何缺貨的商品，自動解析背景 JSON-LD 結構化資料，並在「Notify Me」按鈕上方與商品編號旁顯示背景隱藏價格。
 // @author       Antigravity
 // @match        https://www.fragrancenet.com/*
@@ -12,6 +12,12 @@
 (function() {
     'use strict';
 
+    // 豪華樣式的 Console Log 標頭
+    console.log(
+        "%c🚀 [FragranceNet Helper v1.6] 油猴指令碼已成功載入並開始執行！", 
+        "color: #ffffff; background: #522555; font-weight: bold; font-size: 13px; padding: 4px 10px; border-radius: 4px;"
+    );
+
     // 儲存 SKU -> 價格與幣別資訊的對照表
     let skuPriceMap = {};
     let debounceTimer = null;
@@ -19,7 +25,9 @@
     // 解析 JSON-LD 結構化資料
     function parseJsonLd() {
         const scripts = document.querySelectorAll('script[type="application/ld+json"]');
-        scripts.forEach(script => {
+        console.log(`[FragranceNet Helper] 開始掃描結構化資料，發現標籤數: ${scripts.length}`);
+        
+        scripts.forEach((script, idx) => {
             try {
                 // 避開已解析過的標籤，提升效能
                 if (script.dataset.parsedByPriceHelper) return;
@@ -38,17 +46,19 @@
                                 const price = offer.price;
                                 const currency = offer.priceCurrency || 'USD';
                                 if (sku && price !== undefined) {
-                                    skuPriceMap[sku.trim()] = {
+                                    const cleanSku = sku.trim();
+                                    skuPriceMap[cleanSku] = {
                                         price: parseFloat(price).toFixed(2),
                                         currency: currency
                                     };
+                                    console.log(`%c[LD-JSON 解析成功] SKU: ${cleanSku} -> 售價: $${price} ${currency}`, "color: #b89753; font-weight: 500;");
                                 }
                             });
                         }
                     }
                 });
             } catch (e) {
-                // 忽略格式錯誤裝的 JSON
+                console.warn(`[FragranceNet Helper] 解析第 ${idx + 1} 個 JSON-LD 標籤失敗:`, e.message);
             }
         });
     }
@@ -90,15 +100,20 @@
     // 取得當前頁面上所有顯現出來的商品編號（Item #）
     function getActiveSkusOnPage() {
         const skuElements = findSkuElements();
-        return Array.from(new Set(skuElements.map(x => x.sku)));
+        const skus = Array.from(new Set(skuElements.map(x => x.sku)));
+        console.log("[FragranceNet Helper] 目前頁面上已顯現的 SKU 編號:", skus);
+        return skus;
     }
 
     // 執行價格注入邏輯
     function injectPrices() {
+        console.log("[FragranceNet Helper] 正在執行價格注入掃描...");
         parseJsonLd();
 
         // 1. 在最深層的商品編號「Item #XXXXXX」旁注入精美小紫色標籤
         const skuElements = findSkuElements();
+        console.log(`[FragranceNet Helper] 發現 SKU DOM 節點數量: ${skuElements.length}`);
+        
         skuElements.forEach(item => {
             const el = item.element;
             const sku = item.sku;
@@ -108,6 +123,7 @@
             if (!existingBadge) {
                 const priceInfo = skuPriceMap[sku];
                 if (priceInfo) {
+                    console.log(`[UI 標籤注入] 正在為 SKU: ${sku} 注入小標籤...`);
                     const badge = document.createElement('span');
                     badge.className = 'fnet-injected-badge';
                     badge.style.display = 'inline-flex';
@@ -125,21 +141,29 @@
                     badge.textContent = `背景售價: $${priceInfo.price} ${priceInfo.currency}`;
                     
                     el.appendChild(badge);
+                } else {
+                    console.log(`[UI 標籤跳過] SKU: ${sku} 在背景 Map 中找不到價格資料。`);
                 }
+            } else {
+                console.log(`[UI 標籤已存在] SKU: ${sku} 已有紫色小標籤。`);
             }
         });
 
         // 2. 在缺貨的「Notify me / When Available」按鈕上方，生成價格提示大看板
         const buttons = document.querySelectorAll('button');
+        let notifyBtnCount = 0;
+        
         buttons.forEach(btn => {
             const btnText = btn.textContent.toLowerCase();
             const hasNotifyText = btnText.includes('notify me') || btnText.includes('when available');
             if (hasNotifyText) {
+                notifyBtnCount++;
                 // 檢查該按鈕的前一個兄弟元素是否已是看板（防範 React 動態更新抹除看板）
                 const prevEl = btn.previousElementSibling;
                 const hasBanner = prevEl && prevEl.classList.contains('fnet-injected-price-banner');
                 
                 if (!hasBanner) {
+                    console.log("[UI 橫幅偵測] 發現缺貨按鈕，準備進行大橫幅注入...", btn);
                     // 抓取此按鈕當前關聯的 SKU 編號
                     const activeSkus = getActiveSkusOnPage();
                     if (activeSkus.length > 0) {
@@ -147,6 +171,7 @@
                         const priceInfo = skuPriceMap[activeSku];
 
                         if (priceInfo) {
+                            console.log(`%c[UI 橫幅注入成功] 正在 Notify Me 上方顯示背景底價: $${priceInfo.price}`, "color: #522555; font-weight: bold;");
                             // 刪除可能因 DOM 重新排序或更新而殘留的舊看板
                             const oldBanners = btn.parentNode.querySelectorAll('.fnet-injected-price-banner');
                             oldBanners.forEach(ob => ob.remove());
@@ -181,11 +206,18 @@
 
                             // 插入至 Notify Me 按鈕的前方（上方）
                             btn.parentNode.insertBefore(banner, btn);
+                        } else {
+                            console.log(`[UI 橫幅跳過] 當前 Active SKU: ${activeSku} 找不到背景價格資料。`);
                         }
+                    } else {
+                        console.warn("[UI 橫幅跳過] 畫面上找不到任何商品編號，無法對應價格。");
                     }
+                } else {
+                    console.log("[UI 橫幅已存在] 缺貨按鈕上方已存在大橫幅，跳過。");
                 }
             }
         });
+        console.log(`[FragranceNet Helper] 掃描完畢，頁面上缺貨按鈕數量: ${notifyBtnCount}`);
     }
 
     // 注入淡入動畫 CSS 樣式
