@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FragranceNet 缺貨商品背景價格顯示器
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.1
 // @description  在 FragranceNet 上針對任何缺貨的商品，自動解析背景 JSON-LD 結構化資料，並在「Notify Me」按鈕上方與商品編號旁顯示背景隱藏價格。
 // @author       Antigravity
 // @match        https://www.fragrancenet.com/*
@@ -14,13 +14,29 @@
 
     // 豪華樣式的 Console Log 標頭
     console.log(
-        "%c🚀 [FragranceNet Helper v2.0] 油猴指令碼已載入並啟動雙模守護機制（Observer + Timer）！",
+        "%c🚀 [FragranceNet Helper v2.1] 油猴指令碼已載入並啟動雙模守護機制（Observer + Timer）！",
         "color: #ffffff; background: #522555; font-weight: bold; font-size: 13px; padding: 4px 10px; border-radius: 4px;"
     );
 
     // 儲存 SKU -> 價格與幣別資訊的對照表
     let skuPriceMap = {};
     let debounceTimer = null;
+    let hasDisplayedPrice = false;
+    let observer = null;
+    let pollingTimer = null;
+
+    function stopScanningAfterPriceDisplayed() {
+        hasDisplayedPrice = true;
+        if (debounceTimer) clearTimeout(debounceTimer);
+        if (observer) {
+            observer.disconnect();
+            observer = null;
+        }
+        if (pollingTimer) {
+            clearInterval(pollingTimer);
+            pollingTimer = null;
+        }
+    }
 
     // 解析 JSON-LD 結構化資料
     function parseJsonLd() {
@@ -155,6 +171,8 @@
 
     // 執行價格注入邏輯
     function injectPrices() {
+        if (hasDisplayedPrice) return;
+
         // 印出簡單標記以在主控台確認掃描是否有被執行
         console.log("[FragranceNet Helper] 執行價格注入掃描 (Time: " + new Date().toLocaleTimeString() + ")");
         
@@ -191,6 +209,7 @@
                     badge.textContent = `背景售價: $${priceInfo.price} ${priceInfo.currency}`;
                     
                     el.appendChild(badge);
+                    stopScanningAfterPriceDisplayed();
                 }
             }
         });
@@ -276,6 +295,7 @@
 
                             // 插入至 Notify Me 按鈕的前方（上方）
                             insertParent.insertBefore(banner, insertBeforeEl);
+                            stopScanningAfterPriceDisplayed();
                         }
                     }
                 }
@@ -303,18 +323,20 @@
     injectPrices();
 
     // 監聽網頁所有 DOM 變更，鎖定 document.documentElement (最上層根結點) 以確保絕不漏抓
-    const observer = new MutationObserver(() => {
-        if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
-            injectPrices();
-        }, 150);
-    });
+    if (!hasDisplayedPrice) {
+        observer = new MutationObserver(() => {
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                injectPrices();
+            }, 150);
+        });
 
-    observer.observe(document.documentElement, {
-        childList: true,
-        subtree: true
-    });
+        observer.observe(document.documentElement, {
+            childList: true,
+            subtree: true
+        });
 
-    // 備用防線：設定 1.5 秒的定時輪詢，防止因 isolated context 或特定瀏覽器阻擋 MutationObserver 運作
-    setInterval(injectPrices, 1500);
+        // 備用防線：設定 1.5 秒的定時輪詢，防止因 isolated context 或特定瀏覽器阻擋 MutationObserver 運作
+        pollingTimer = setInterval(injectPrices, 1500);
+    }
 })();
