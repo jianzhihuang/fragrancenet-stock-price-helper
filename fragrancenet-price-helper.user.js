@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FragranceNet 缺貨商品背景價格顯示器
 // @namespace    http://tampermonkey.net/
-// @version      1.2
+// @version      1.3
 // @description  在 FragranceNet 上針對任何缺貨的商品，自動解析背景 JSON-LD 結構化資料，並在「Notify Me」按鈕上方與商品編號旁顯示背景隱藏價格。
 // @author       Antigravity
 // @match        https://www.fragrancenet.com/*
@@ -48,66 +48,78 @@
                     }
                 });
             } catch (e) {
-                // 忽略格式錯誤的 JSON
+                // 忽略格式錯誤裝的 JSON
             }
         });
     }
 
-    // 取得當前頁面上所有顯現出來的商品編號（Item #）
-    function getActiveSkusOnPage() {
-        const skus = new Set();
-        const elements = document.querySelectorAll('span, div, p, font, h1, h2');
-        elements.forEach(el => {
-            if (el.children.length === 0 && el.textContent.includes('Item #')) {
-                const match = el.textContent.match(/Item\s*#\s*(\d+)/i);
-                if (match) {
-                    skus.add(match[1].trim());
+    // 尋找當前頁面最深層包含 "Item #" 的元素及其對應的 SKU
+    function findSkuElements() {
+        const skuElements = [];
+        const allElements = document.querySelectorAll('*');
+        allElements.forEach(el => {
+            if (el.textContent.includes('Item #')) {
+                // 檢查其子元素是否也包含 "Item #"，以定位到最深層葉子元素
+                const hasChildWithText = Array.from(el.children).some(child => child.textContent.includes('Item #'));
+                if (!hasChildWithText) {
+                    const match = el.textContent.match(/Item\s*#\s*(\d+)/i);
+                    if (match) {
+                        skuElements.push({
+                            element: el,
+                            sku: match[1].trim()
+                        });
+                    }
                 }
             }
         });
-        return Array.from(skus);
+        return skuElements;
+    }
+
+    // 取得當前頁面上所有顯現出來的商品編號（Item #）
+    function getActiveSkusOnPage() {
+        const skuElements = findSkuElements();
+        return Array.from(new Set(skuElements.map(x => x.sku)));
     }
 
     // 執行價格注入邏輯
     function injectPrices() {
         parseJsonLd();
 
-        // 1. 在商品編號「Item #XXXXXX」旁注入精美小紫色標籤
-        const elements = document.querySelectorAll('span, div, p, font');
-        elements.forEach(el => {
-            if (el.children.length === 0 && el.textContent.includes('Item #') && !el.dataset.priceInjected) {
-                const match = el.textContent.match(/Item\s*#\s*(\d+)/i);
-                if (match) {
-                    const sku = match[1].trim();
-                    const priceInfo = skuPriceMap[sku];
-                    if (priceInfo) {
-                        el.dataset.priceInjected = 'true';
-                        
-                        const badge = document.createElement('span');
-                        badge.style.display = 'inline-flex';
-                        badge.style.alignItems = 'center';
-                        badge.style.marginLeft = '10px';
-                        badge.style.padding = '2px 8px';
-                        badge.style.borderRadius = '12px';
-                        badge.style.backgroundColor = '#f3e8ff'; // 溫和淡紫
-                        badge.style.color = '#522555';           // 官網品牌深紫
-                        badge.style.fontWeight = '600';
-                        badge.style.fontSize = '12px';
-                        badge.style.border = '1px solid #e9d5ff';
-                        badge.style.boxShadow = '0 1px 2px rgba(82, 37, 85, 0.08)';
-                        badge.style.transition = 'all 0.2s ease';
-                        badge.textContent = `背景售價: $${priceInfo.price} ${priceInfo.currency}`;
-                        
-                        el.appendChild(badge);
-                    }
+        // 1. 在最深層的商品編號「Item #XXXXXX」旁注入精美小紫色標籤
+        const skuElements = findSkuElements();
+        skuElements.forEach(item => {
+            const el = item.element;
+            const sku = item.sku;
+            if (!el.dataset.priceInjected) {
+                const priceInfo = skuPriceMap[sku];
+                if (priceInfo) {
+                    el.dataset.priceInjected = 'true';
+                    
+                    const badge = document.createElement('span');
+                    badge.style.display = 'inline-flex';
+                    badge.style.alignItems = 'center';
+                    badge.style.marginLeft = '10px';
+                    badge.style.padding = '2px 8px';
+                    badge.style.borderRadius = '12px';
+                    badge.style.backgroundColor = '#f3e8ff'; // 溫和淡紫
+                    badge.style.color = '#522555';           // 官網品牌深紫
+                    badge.style.fontWeight = '600';
+                    badge.style.fontSize = '12px';
+                    badge.style.border = '1px solid #e9d5ff';
+                    badge.style.boxShadow = '0 1px 2px rgba(82, 37, 85, 0.08)';
+                    badge.style.transition = 'all 0.2s ease';
+                    badge.textContent = `背景售價: $${priceInfo.price} ${priceInfo.currency}`;
+                    
+                    el.appendChild(badge);
                 }
             }
         });
 
-        // 2. 在缺貨的「Notify me When Available」按鈕上方，生成價格提示大看板
+        // 2. 在缺貨的「Notify me / When Available」按鈕上方，生成價格提示大看板
         const buttons = document.querySelectorAll('button');
         buttons.forEach(btn => {
-            const hasNotifyText = btn.textContent.toLowerCase().includes('notify me');
+            const btnText = btn.textContent.toLowerCase();
+            const hasNotifyText = btnText.includes('notify me') || btnText.includes('when available');
             if (hasNotifyText && !btn.dataset.priceBannerInjected) {
                 btn.dataset.priceBannerInjected = 'true';
 
