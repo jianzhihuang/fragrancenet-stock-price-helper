@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FragranceNet 缺貨商品背景價格顯示器
 // @namespace    http://tampermonkey.net/
-// @version      1.9
+// @version      2.0
 // @description  在 FragranceNet 上針對任何缺貨的商品，自動解析背景 JSON-LD 結構化資料，並在「Notify Me」按鈕上方與商品編號旁顯示背景隱藏價格。
 // @author       Antigravity
 // @match        https://www.fragrancenet.com/*
@@ -14,7 +14,7 @@
 
     // 豪華樣式的 Console Log 標頭
     console.log(
-        "%c🚀 [FragranceNet Helper v1.9] 油猴指令碼已載入並啟動雙模守護機制（Observer + Timer）！",
+        "%c🚀 [FragranceNet Helper v2.0] 油猴指令碼已載入並啟動雙模守護機制（Observer + Timer）！",
         "color: #ffffff; background: #522555; font-weight: bold; font-size: 13px; padding: 4px 10px; border-radius: 4px;"
     );
 
@@ -83,6 +83,31 @@
         });
     }
 
+    // FragranceNet 缺貨頁常把歷史價格留在全域 sku_map，而不是 JSON-LD
+    function parsePageSkuMap() {
+        const pageWindow = typeof window !== 'undefined' ? window : {};
+        const pageSkuMap = pageWindow.sku_map;
+        if (!pageSkuMap || typeof pageSkuMap !== 'object') return;
+
+        Object.keys(pageSkuMap).forEach(sku => {
+            const item = pageSkuMap[sku];
+            if (!item || typeof item !== 'object') return;
+
+            const rawPrice = item.discount_price || item.price || item.sale_price || item.list_price;
+            if (rawPrice === undefined || rawPrice === null || rawPrice === '') return;
+
+            const numericPrice = parseFloat(String(rawPrice).replace(/[^0-9.]/g, ''));
+            if (Number.isNaN(numericPrice)) return;
+
+            const cleanSku = String(sku).trim();
+            skuPriceMap[cleanSku] = {
+                price: numericPrice.toFixed(2),
+                currency: item.priceCurrency || item.currency || 'USD'
+            };
+            console.log(`%c[SKU_MAP 解析成功] SKU: ${cleanSku} -> 售價: $${numericPrice.toFixed(2)}`, "color: #b89753; font-weight: bold;");
+        });
+    }
+
     // 尋找當前頁面最深層包含關鍵字（支援中文翻譯與多格式）的元素及其對應的 SKU
     function findSkuElements() {
         const skuElements = [];
@@ -134,6 +159,7 @@
         console.log("[FragranceNet Helper] 執行價格注入掃描 (Time: " + new Date().toLocaleTimeString() + ")");
         
         parseJsonLd();
+        parsePageSkuMap();
 
         // 1. 在最深層的商品編號「Item #XXXXXX」旁注入精美小紫色標籤
         const skuElements = findSkuElements();
@@ -169,18 +195,30 @@
             }
         });
 
-        // 2. 在缺貨的「Notify me / When Available」按鈕上方，生成價格提示大看板
-        const buttons = document.querySelectorAll('button');
+        // 2. 在缺貨的「Notify me / When Available / Submit」控制項上方，生成價格提示大看板
+        const buttons = document.querySelectorAll('button, input[type="submit"]');
         
         buttons.forEach(btn => {
-            const btnText = btn.textContent.toLowerCase();
-            const parentText = btn.parentNode ? btn.parentNode.textContent.toLowerCase() : '';
-            const isSoldOutEmailForm = btnText.includes('submit') && parentText.includes('sold out') && parentText.includes('email');
+            const btnText = ((btn.value || '') + ' ' + (btn.textContent || '')).toLowerCase();
+            let soldOutContainer = null;
+            let contextNode = btn.parentNode;
+            while (contextNode && contextNode !== document.documentElement) {
+                const contextText = contextNode.textContent.toLowerCase();
+                if (contextText.includes('sold out') && contextText.includes('email')) {
+                    soldOutContainer = contextNode;
+                    break;
+                }
+                contextNode = contextNode.parentNode;
+            }
+
+            const isSoldOutEmailForm = btnText.includes('submit') && !!soldOutContainer;
             const hasNotifyText = btnText.includes('notify me') || btnText.includes('when available') || isSoldOutEmailForm;
             if (hasNotifyText) {
+                const insertParent = isSoldOutEmailForm ? soldOutContainer : btn.parentNode;
+                const formEl = isSoldOutEmailForm ? Array.from(soldOutContainer.children).find(child => child.tagName === 'FORM') : null;
+                const insertBeforeEl = formEl || btn;
                 // 檢查該按鈕的前一個兄弟元素是否已是看板（防範 React 動態更新抹除看板）
-                const prevEl = btn.previousElementSibling;
-                const hasBanner = prevEl && prevEl.classList.contains('fnet-injected-price-banner');
+                const hasBanner = insertParent.querySelector('.fnet-injected-price-banner');
                 
                 if (!hasBanner) {
                     console.log("[UI 橫幅偵測] 發現缺貨按鈕，準備進行大橫幅注入...", btn);
@@ -190,8 +228,14 @@
                     console.log("[FragranceNet Helper] 目前頁面上已顯現的 SKU 編號:", activeSkus);
                     let activeSku = getSkuNearButton(btn, skuElements) || activeSkus[0];
                     if (!activeSku) {
-                        const pricedSkus = Object.keys(skuPriceMap);
-                        activeSku = pricedSkus.length === 1 ? pricedSkus[0] : null;
+                        const pageWindow = typeof window !== 'undefined' ? window : {};
+                        const currentSku = pageWindow.currentSku ? String(pageWindow.currentSku).trim() : '';
+                        if (currentSku && skuPriceMap[currentSku]) {
+                            activeSku = currentSku;
+                        } else {
+                            const pricedSkus = Object.keys(skuPriceMap);
+                            activeSku = pricedSkus.length === 1 ? pricedSkus[0] : null;
+                        }
                     }
                     if (activeSku) {
                         const priceInfo = skuPriceMap[activeSku];
@@ -199,7 +243,7 @@
                         if (priceInfo) {
                             console.log(`%c[UI 橫幅注入成功] 正在 Notify Me 上方顯示背景底價: $${priceInfo.price}`, "color: #522555; font-weight: bold;");
                             // 刪除可能因 DOM 重新排序或更新而殘留的舊看板
-                            const oldBanners = btn.parentNode.querySelectorAll('.fnet-injected-price-banner');
+                            const oldBanners = insertParent.querySelectorAll('.fnet-injected-price-banner');
                             oldBanners.forEach(ob => ob.remove());
 
                             // 建立外觀高雅的虛線外框看板
@@ -231,7 +275,7 @@
                             `;
 
                             // 插入至 Notify Me 按鈕的前方（上方）
-                            btn.parentNode.insertBefore(banner, btn);
+                            insertParent.insertBefore(banner, insertBeforeEl);
                         }
                     }
                 }
