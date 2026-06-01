@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FragranceNet 缺貨商品背景價格顯示器
 // @namespace    http://tampermonkey.net/
-// @version      1.7
+// @version      1.8
 // @description  在 FragranceNet 上針對任何缺貨的商品，自動解析背景 JSON-LD 結構化資料，並在「Notify Me」按鈕上方與商品編號旁顯示背景隱藏價格。
 // @author       Antigravity
 // @match        https://www.fragrancenet.com/*
@@ -14,7 +14,7 @@
 
     // 豪華樣式的 Console Log 標頭
     console.log(
-        "%c🚀 [FragranceNet Helper v1.7] 油猴指令碼已載入並啟動雙模守護機制（Observer + Timer）！", 
+        "%c🚀 [FragranceNet Helper v1.8] 油猴指令碼已載入並啟動雙模守護機制（Observer + Timer）！",
         "color: #ffffff; background: #522555; font-weight: bold; font-size: 13px; padding: 4px 10px; border-radius: 4px;"
     );
 
@@ -28,29 +28,31 @@
         
         scripts.forEach((script, idx) => {
             try {
-                // 避開已解析過的標籤，提升效能
-                if (script.dataset.parsedByPriceHelper) return;
-                script.dataset.parsedByPriceHelper = 'true';
+                const rawJson = script.textContent.trim();
+                if (!rawJson || script.dataset.parsedByPriceHelper === rawJson) return;
 
-                const data = JSON.parse(script.textContent);
+                const data = JSON.parse(rawJson);
+                script.dataset.parsedByPriceHelper = rawJson;
                 console.log(`[LD-JSON 掃描] 成功讀取第 ${idx + 1} 個 JSON 對象:`, data);
                 
-                const items = Array.isArray(data) ? data : [data];
+                const pendingItems = Array.isArray(data) ? [...data] : [data];
 
-                items.forEach(item => {
-                    if (item) {
+                while (pendingItems.length > 0) {
+                    const item = pendingItems.shift();
+                    if (item && typeof item === 'object') {
                         const type = item['@type'];
                         const offers = item.offers;
-                        const sku = item.sku || (offers && offers.sku);
+                        const sku = item.sku || (offers && !Array.isArray(offers) && offers.sku);
                         
                         console.log(`[LD-JSON 節點] 偵測到類型: "${type}", SKU: "${sku}", 有 Offers: ${!!offers}`);
 
                         // 只要節點包含 offers 或 sku，即視為產品資訊（防止因網頁翻譯將 Product 類型字串翻譯成中文而配對失敗）
-                        const isProduct = type === 'Product' || offers || sku || (Array.isArray(type) && type.includes('Product'));
+                        const isProduct = type === 'Product' || type === 'ProductGroup' || offers || sku || (Array.isArray(type) && (type.includes('Product') || type.includes('ProductGroup')));
                         
                         if (isProduct && offers) {
                             const offerList = Array.isArray(offers) ? offers : [offers];
                             offerList.forEach(offer => {
+                                if (!offer || typeof offer !== 'object') return;
                                 const finalSku = offer.sku || item.sku;
                                 const price = offer.price;
                                 const currency = offer.priceCurrency || 'USD';
@@ -64,8 +66,17 @@
                                 }
                             });
                         }
+
+                        ['hasVariant', 'variant', 'isVariantOf', '@graph', 'itemListElement'].forEach(key => {
+                            const childItems = item[key];
+                            if (Array.isArray(childItems)) {
+                                pendingItems.push(...childItems);
+                            } else if (childItems && typeof childItems === 'object') {
+                                pendingItems.push(childItems);
+                            }
+                        });
                     }
-                });
+                }
             } catch (e) {
                 console.warn(`[FragranceNet Helper] 解析第 ${idx + 1} 個 JSON-LD 標籤失敗:`, e.message);
             }
@@ -106,12 +117,15 @@
         return skuElements;
     }
 
-    // 取得當前頁面上所有顯現出來的商品編號（Item #）
-    function getActiveSkusOnPage() {
-        const skuElements = findSkuElements();
-        const skus = Array.from(new Set(skuElements.map(x => x.sku)));
-        console.log("[FragranceNet Helper] 目前頁面上已顯現的 SKU 編號:", skus);
-        return skus;
+    // 優先用 Notify Me 按鈕附近容器的 Item #，避免多規格頁面誤抓第一個 SKU
+    function getSkuNearButton(btn, skuElements) {
+        let container = btn.parentNode;
+        while (container && container !== document.documentElement) {
+            const matched = skuElements.find(item => container.contains(item.element));
+            if (matched) return matched.sku;
+            container = container.parentNode;
+        }
+        return null;
     }
 
     // 執行價格注入邏輯
@@ -169,9 +183,11 @@
                 if (!hasBanner) {
                     console.log("[UI 橫幅偵測] 發現缺貨按鈕，準備進行大橫幅注入...", btn);
                     // 抓取此按鈕當前關聯的 SKU 編號
-                    const activeSkus = getActiveSkusOnPage();
+                    const skuElements = findSkuElements();
+                    const activeSkus = Array.from(new Set(skuElements.map(x => x.sku)));
+                    console.log("[FragranceNet Helper] 目前頁面上已顯現的 SKU 編號:", activeSkus);
                     if (activeSkus.length > 0) {
-                        const activeSku = activeSkus[0];
+                        const activeSku = getSkuNearButton(btn, skuElements) || activeSkus[0];
                         const priceInfo = skuPriceMap[activeSku];
 
                         if (priceInfo) {
