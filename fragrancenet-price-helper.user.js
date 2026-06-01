@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FragranceNet 缺貨商品背景價格顯示器
 // @namespace    http://tampermonkey.net/
-// @version      1.4
+// @version      1.5
 // @description  在 FragranceNet 上針對任何缺貨的商品，自動解析背景 JSON-LD 結構化資料，並在「Notify Me」按鈕上方與商品編號旁顯示背景隱藏價格。
 // @author       Antigravity
 // @match        https://www.fragrancenet.com/*
@@ -53,16 +53,28 @@
         });
     }
 
-    // 尋找當前頁面最深層包含 "Item #" 的元素及其對應的 SKU
+    // 尋找當前頁面最深層包含關鍵字（支援中文翻譯與多格式）的元素及其對應的 SKU
     function findSkuElements() {
         const skuElements = [];
         const allElements = document.querySelectorAll('*');
+        const ignoredTags = ['SCRIPT', 'STYLE', 'NOSCRIPT', 'IFRAME', 'TEXTAREA', 'HEAD', 'HTML', 'META', 'LINK'];
+        
         allElements.forEach(el => {
-            if (el.textContent.includes('Item #')) {
-                // 檢查其子元素是否也包含 "Item #"，以定位到最深層葉子元素
-                const hasChildWithText = Array.from(el.children).some(child => child.textContent.includes('Item #'));
+            if (ignoredTags.includes(el.tagName)) return;
+            
+            const text = el.textContent;
+            // 匹配 English "Item" 與中文翻譯字詞（項目、商品、編號、编号）
+            const hasKeyword = /(?:Item|項目|商品|編號|编号)/i.test(text);
+            
+            if (hasKeyword) {
+                // 檢查其子元素是否也包含關鍵字，以定位到最深層葉子元素
+                const hasChildWithText = Array.from(el.children).some(child => {
+                    return !ignoredTags.includes(child.tagName) && /(?:Item|項目|商品|編號|编号)/i.test(child.textContent);
+                });
+                
                 if (!hasChildWithText) {
-                    const match = el.textContent.match(/Item\s*#\s*(\d+)/i);
+                    // 匹配諸如 "Item #488007"、"商品編號: 488007"、"項目:488007"、"Item: 488007" 等多元格式
+                    const match = text.match(/(?:Item|項目|商品|編號|编号)\s*[:：#]?\s*(\d{5,7})/i);
                     if (match) {
                         skuElements.push({
                             element: el,
