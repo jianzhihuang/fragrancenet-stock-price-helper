@@ -189,6 +189,30 @@ function testNotifyButtonUsesNearestSku() {
     assert.doesNotMatch(bannerText(secondPanel), /\$10\.00/);
 }
 
+function testSoldOutEmailFormUsesSingleJsonLdPriceWithoutVisibleSku() {
+    const panel = new Element('div');
+    panel.appendChild(new Element('p', 'We apologize, we are currently sold out'));
+    panel.appendChild(new Element('p', 'please enter your email address below:'));
+    panel.appendChild(new Element('button', 'SUBMIT'));
+    const document = new Document([
+        new ScriptElement({
+            '@type': 'Product',
+            sku: '333333',
+            offers: {
+                price: '33.00',
+                priceCurrency: 'USD'
+            }
+        }),
+        panel
+    ]);
+
+    runScript(document);
+
+    assert.match(bannerText(panel), /\$33\.00/);
+    assert.match(bannerText(panel), /Item #333333/);
+}
+
 testNestedVariantPriceIsDisplayed();
 testNotifyButtonUsesNearestSku();
+testSoldOutEmailFormUsesSingleJsonLdPriceWithoutVisibleSku();
 console.log('All tests passed');
