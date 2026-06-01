@@ -127,16 +127,17 @@ function matches(el, selector) {
     return false;
 }
 
-function runScript(document, pageWindow = {}) {
+function runScript(document, pageWindow = {}, runtime = {}) {
     const code = fs.readFileSync('fragrancenet-price-helper.user.js', 'utf8');
     vm.runInNewContext(code, {
         document,
         window: pageWindow,
         console: { log() {}, warn() {} },
-        MutationObserver: class { observe() {} },
-        setInterval() {},
+        MutationObserver: runtime.MutationObserver || class { observe() {} },
+        setInterval: runtime.setInterval || function() {},
         setTimeout(fn) { fn(); return 1; },
-        clearTimeout() {}
+        clearTimeout() {},
+        clearInterval: runtime.clearInterval || function() {}
     });
 }
 
@@ -251,8 +252,38 @@ function testSoldOutSubmitInputUsesSkuMapPriceWithoutVisibleSku() {
     assert.match(bannerText(panel), /Item #416615/);
 }
 
+function testStopsPollingAfterInitialPriceDisplay() {
+    const panel = productPanel('555555');
+    const document = new Document([
+        new ScriptElement({
+            '@type': 'Product',
+            sku: '555555',
+            offers: { price: '55.00', priceCurrency: 'USD' }
+        }),
+        panel
+    ]);
+    let intervalStarted = false;
+    let observerStarted = false;
+
+    runScript(document, {}, {
+        setInterval() {
+            intervalStarted = true;
+        },
+        MutationObserver: class {
+            observe() {
+                observerStarted = true;
+            }
+        }
+    });
+
+    assert.match(bannerText(panel), /\$55\.00/);
+    assert.strictEqual(intervalStarted, false);
+    assert.strictEqual(observerStarted, false);
+}
+
 testNestedVariantPriceIsDisplayed();
 testNotifyButtonUsesNearestSku();
 testSoldOutEmailFormUsesSingleJsonLdPriceWithoutVisibleSku();
 testSoldOutSubmitInputUsesSkuMapPriceWithoutVisibleSku();
+testStopsPollingAfterInitialPriceDisplay();
 console.log('All tests passed');
